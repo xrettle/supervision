@@ -109,6 +109,10 @@
          <lastmod>2026-02-03</lastmod>
     </url>
     <url>
+         <loc>https://supervision.roboflow.com/develop/how_to/count_in_zone/</loc>
+         <lastmod>2026-02-03</lastmod>
+    </url>
+    <url>
          <loc>https://supervision.roboflow.com/develop/how_to/detect_and_annotate/</loc>
          <lastmod>2026-02-03</lastmod>
     </url>
@@ -202,6 +206,10 @@
     </url>
     <url>
          <loc>https://supervision.roboflow.com/develop/notebooks/small-object-detection-with-sahi/</loc>
+         <lastmod>2026-02-03</lastmod>
+    </url>
+    <url>
+         <loc>https://supervision.roboflow.com/develop/notebooks/underestand-visitors-with-yolo-world/</loc>
          <lastmod>2026-02-03</lastmod>
     </url>
     <url>
