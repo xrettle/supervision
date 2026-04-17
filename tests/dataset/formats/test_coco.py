@@ -1157,6 +1157,143 @@ def test_load_coco_annotations_force_masks_with_no_annotations(
     assert annotations[no_annotations_path] == Detections.empty()
 
 
+@pytest.mark.parametrize(
+    "file_name",
+    [".", "", "subdir/.."],
+)
+def test_load_coco_annotations_rejects_file_name_resolving_to_images_directory(
+    tmp_path,
+    file_name: str,
+) -> None:
+    """Reject file_name resolving to the images directory itself (equality guard)."""
+    images_directory = tmp_path / "images"
+    images_directory.mkdir()
+    annotations_path = tmp_path / "annotations.json"
+
+    coco_data = {
+        "categories": [{"id": 1, "name": "object", "supercategory": "none"}],
+        "images": [{"id": 1, "file_name": file_name, "width": 5, "height": 5}],
+        "annotations": [],
+    }
+    annotations_path.write_text(json.dumps(coco_data), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="resolves to the images directory itself"):
+        load_coco_annotations(
+            images_directory_path=str(images_directory),
+            annotations_path=str(annotations_path),
+        )
+
+
+@pytest.mark.parametrize(
+    "malicious_file_name",
+    [
+        "../escape.txt",
+        "../../escape.txt",
+        "subdir/../../escape.txt",
+    ],
+)
+def test_load_coco_annotations_rejects_file_name_outside_images_directory(
+    tmp_path,
+    malicious_file_name: str,
+) -> None:
+    """Reject relative traversal file_name values that escape the images directory."""
+    images_directory = tmp_path / "images"
+    images_directory.mkdir()
+    annotations_path = tmp_path / "annotations.json"
+
+    coco_data = {
+        "categories": [{"id": 1, "name": "object", "supercategory": "none"}],
+        "images": [
+            {
+                "id": 1,
+                "file_name": malicious_file_name,
+                "width": 5,
+                "height": 5,
+            }
+        ],
+        "annotations": [],
+    }
+    annotations_path.write_text(json.dumps(coco_data), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="outside the images directory"):
+        load_coco_annotations(
+            images_directory_path=str(images_directory),
+            annotations_path=str(annotations_path),
+        )
+
+
+def test_load_coco_annotations_rejects_absolute_file_name(tmp_path) -> None:
+    """Reject absolute file_name values that escape the images directory."""
+    images_directory = tmp_path / "images"
+    images_directory.mkdir()
+    annotations_path = tmp_path / "annotations.json"
+
+    coco_data = {
+        "categories": [{"id": 1, "name": "object", "supercategory": "none"}],
+        "images": [
+            {
+                "id": 1,
+                "file_name": "/etc/passwd",
+                "width": 5,
+                "height": 5,
+            }
+        ],
+        "annotations": [],
+    }
+    annotations_path.write_text(json.dumps(coco_data), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="outside the images directory"):
+        load_coco_annotations(
+            images_directory_path=str(images_directory),
+            annotations_path=str(annotations_path),
+        )
+
+
+def test_load_coco_annotations_rejects_file_name_resolving_to_directory(
+    tmp_path,
+) -> None:
+    """Reject file_name resolving to a subdirectory inside images/ (is_dir guard)."""
+    images_directory = tmp_path / "images"
+    images_directory.mkdir()
+    (images_directory / "subdir").mkdir()
+    annotations_path = tmp_path / "annotations.json"
+
+    coco_data = {
+        "categories": [{"id": 1, "name": "object", "supercategory": "none"}],
+        "images": [{"id": 1, "file_name": "subdir", "width": 5, "height": 5}],
+        "annotations": [],
+    }
+    annotations_path.write_text(json.dumps(coco_data), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="resolves to directory"):
+        load_coco_annotations(
+            images_directory_path=str(images_directory),
+            annotations_path=str(annotations_path),
+        )
+
+
+def test_load_coco_annotations_accepts_valid_nested_file_name(tmp_path) -> None:
+    """Accept a legitimate nested file_name inside images/ without raising."""
+    images_directory = tmp_path / "images"
+    images_directory.mkdir()
+    (images_directory / "train").mkdir()
+    annotations_path = tmp_path / "annotations.json"
+
+    coco_data = {
+        "categories": [{"id": 1, "name": "object", "supercategory": "none"}],
+        "images": [{"id": 1, "file_name": "train/image.jpg", "width": 5, "height": 5}],
+        "annotations": [],
+    }
+    annotations_path.write_text(json.dumps(coco_data), encoding="utf-8")
+
+    _, _, annotations = load_coco_annotations(
+        images_directory_path=str(images_directory),
+        annotations_path=str(annotations_path),
+    )
+    expected_path = str(images_directory / "train" / "image.jpg")
+    assert expected_path in annotations
+
+
 def test_load_coco_annotations_force_masks_handles_missing_segmentation(
     tmp_path,
 ) -> None:

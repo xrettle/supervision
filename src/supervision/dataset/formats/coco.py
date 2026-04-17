@@ -1,4 +1,3 @@
-import os
 import warnings
 from datetime import datetime
 from pathlib import Path
@@ -278,6 +277,19 @@ def load_coco_annotations(
 
     Returns:
         A tuple of `(classes, image_paths, annotations)`.
+
+    Raises:
+        ValueError: If any annotation's ``file_name`` resolves to the images
+            directory itself, to a path outside the images directory (e.g. via
+            ``../`` traversal or an absolute path), or to a subdirectory instead
+            of a regular image file.
+
+    Note:
+        Each annotation's ``file_name`` is validated against
+        ``images_directory_path`` before loading. Annotations that reference
+        paths outside the directory are rejected to prevent path-traversal
+        attacks when loading user-supplied annotation files. Symlinked images
+        pointing outside the resolved images directory are also rejected.
     """
     coco_data = read_json_file(file_path=annotations_path)
     classes = coco_categories_to_classes(coco_categories=coco_data["categories"])
@@ -293,6 +305,7 @@ def load_coco_annotations(
 
     images = []
     annotations = {}
+    images_directory_resolved = Path(images_directory_path).resolve()
 
     for coco_image in coco_images:
         image_name, image_width, image_height = (
@@ -301,7 +314,33 @@ def load_coco_annotations(
             coco_image["height"],
         )
         image_annotations = coco_annotations_groups.get(coco_image["id"], [])
-        image_path = os.path.join(images_directory_path, image_name)
+        image_path = str(Path(images_directory_path) / Path(image_name))
+        try:
+            resolved_image_path = Path(image_path).resolve()
+        except (OSError, ValueError) as exc:
+            raise ValueError(
+                f"COCO annotation refers to image {image_name!r}, which "
+                f"produces an invalid path: {exc}"
+            ) from exc
+        if resolved_image_path == images_directory_resolved:
+            raise ValueError(
+                f"COCO annotation refers to image {image_name!r}, which "
+                f"resolves to the images directory itself "
+                f"({images_directory_resolved}). Expected a path to an "
+                "image file."
+            )
+        if images_directory_resolved not in resolved_image_path.parents:
+            raise ValueError(
+                f"COCO annotation refers to image {image_name!r}, which "
+                f"resolves to {resolved_image_path} — outside the images "
+                f"directory {images_directory_resolved}."
+            )
+        if resolved_image_path.is_dir():
+            raise ValueError(
+                f"COCO annotation refers to image {image_name!r}, which "
+                f"resolves to directory {resolved_image_path}. Expected a "
+                "path to an image file."
+            )
 
         with_masks = force_masks or any(
             _with_seg_mask(annotation) for annotation in image_annotations
