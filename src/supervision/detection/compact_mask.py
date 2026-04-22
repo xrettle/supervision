@@ -12,97 +12,22 @@ crop boundaries, so no extra metadata is required from the caller.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from typing import Any, cast
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
 
-
-def _rle_encode(mask_2d: npt.NDArray[Any]) -> npt.NDArray[np.int32]:
-    """Run-length encode a 2D boolean mask in column-major (Fortran) order.
-
-    Pixels are scanned column-by-column (top-to-bottom within each column,
-    left-to-right across columns), matching the COCO / pycocotools RLE
-    convention.  The encoding starts with the count of leading ``False``
-    values (may be 0 if the mask begins with ``True``).  Subsequent values
-    alternate between ``True`` and ``False`` run counts.
-
-    Args:
-        mask_2d: 2D boolean array of shape ``(H, W)``.
-
-    Returns:
-        int32 array of run lengths, starting with the False count.
-
-    Examples:
-        ```pycon
-        >>> import numpy as np
-        >>> from supervision.detection.compact_mask import _rle_encode
-        >>> mask = np.array([[False, True, True], [True, False, False]])
-        >>> _rle_encode(mask).tolist()
-        [1, 2, 1, 1, 1]
-
-        ```
-    """
-    flat = mask_2d.ravel(order="F")  # F-order (column-major, COCO-compatible)
-    if len(flat) == 0:
-        return np.array([0], dtype=np.int32)
-
-    # Locate positions where the boolean value changes.
-    changes = np.diff(flat.view(np.uint8))
-    boundaries = np.where(changes != 0)[0] + 1
-
-    positions = np.concatenate(([0], boundaries, [len(flat)]))
-    run_lengths = np.diff(positions).astype(np.int32)
-
-    # Guarantee the encoding always starts with a False count.
-    if flat[0]:
-        run_lengths = np.concatenate(([np.int32(0)], run_lengths))
-
-    return run_lengths
-
-
-def _rle_decode(
-    rle: npt.NDArray[np.int32], height: int, width: int
-) -> npt.NDArray[np.bool_]:
-    """Decode a run-length encoded mask back to a 2D boolean array.
-
-    Args:
-        rle: int32 array of run lengths as produced by :func:`_rle_encode`.
-        height: Height of the output array.
-        width: Width of the output array.
-
-    Returns:
-        2D boolean array of shape ``(height, width)``.
-
-    Examples:
-        ```pycon
-        >>> import numpy as np
-        >>> from supervision.detection.compact_mask import _rle_decode
-        >>> rle = np.array([1, 2, 1, 1, 1], dtype=np.int32)
-        >>> _rle_decode(rle, 2, 3)
-        array([[False,  True,  True],
-               [ True, False, False]])
-
-        ```
-    """
-    # Even-indexed entries → False runs; odd-indexed entries → True runs.
-    is_true = np.arange(len(rle)) % 2 == 1
-    flat: npt.NDArray[np.bool_] = np.repeat(is_true, rle)
-    num_pixels = height * width
-    if len(flat) < num_pixels:
-        # Pad with False if the RLE is shorter than expected (e.g. all-False
-        # tails are often omitted during encoding).
-        flat = np.pad(flat, (0, num_pixels - len(flat)))
-    return cast(
-        npt.NDArray[np.bool_], flat[:num_pixels].reshape(height, width, order="F")
-    )
+from supervision.detection.utils.converters import (
+    _mask_to_rle_counts,
+    _rle_counts_to_mask,
+)
 
 
 def _rle_area(rle: npt.NDArray[np.int32]) -> int:
     """Return the number of ``True`` pixels in a run-length encoded mask.
 
     Args:
-        rle: int32 array of run lengths as produced by :func:`_rle_encode`.
+        rle: int32 array of run lengths as produced by :func:`_mask_to_rle_counts`.
 
     Returns:
         Total number of ``True`` pixels.
@@ -274,7 +199,7 @@ class CompactMask:
 
             crop_h = y2c - y1c + 1
             crop_w = x2c - x1c + 1
-            rles.append(_rle_encode(crop))
+            rles.append(_mask_to_rle_counts(crop))
             crop_shapes_list.append((crop_h, crop_w))
             offsets_list.append((x1c, y1c))
 
@@ -314,7 +239,7 @@ class CompactMask:
                 int(self._crop_shapes[mask_idx, 1]),
             )
             x1, y1 = int(self._offsets[mask_idx, 0]), int(self._offsets[mask_idx, 1])
-            crop = _rle_decode(self._rles[mask_idx], crop_h, crop_w)
+            crop = _rle_counts_to_mask(self._rles[mask_idx], crop_h, crop_w)
             result[mask_idx, y1 : y1 + crop_h, x1 : x1 + crop_w] = crop
         return result
 
@@ -345,7 +270,7 @@ class CompactMask:
         """
         crop_h = int(self._crop_shapes[index, 0])
         crop_w = int(self._crop_shapes[index, 1])
-        return _rle_decode(self._rles[index], crop_h, crop_w)
+        return _rle_counts_to_mask(self._rles[index], crop_h, crop_w)
 
     # ------------------------------------------------------------------
     # Sequence / array protocol
@@ -566,7 +491,7 @@ class CompactMask:
             crop_w = int(self._crop_shapes[idx, 1])
             x1 = int(self._offsets[idx, 0])
             y1 = int(self._offsets[idx, 1])
-            crop = _rle_decode(self._rles[idx], crop_h, crop_w)
+            crop = _rle_counts_to_mask(self._rles[idx], crop_h, crop_w)
             result[y1 : y1 + crop_h, x1 : x1 + crop_w] = crop
             return result
 
@@ -772,7 +697,7 @@ class CompactMask:
 
             if not rows_any.any():
                 # All-False: normalise to 1x1 to avoid zero-sized arrays.
-                new_rles.append(_rle_encode(np.zeros((1, 1), dtype=bool)))
+                new_rles.append(_mask_to_rle_counts(np.zeros((1, 1), dtype=bool)))
                 new_crop_shapes_list.append((1, 1))
                 new_offsets_list.append((x1_off, y1_off))
                 continue
@@ -783,7 +708,7 @@ class CompactMask:
             x_min, x_max = int(x_indices[0]), int(x_indices[-1])
 
             tight = crop[y_min : y_max + 1, x_min : x_max + 1]
-            new_rles.append(_rle_encode(tight))
+            new_rles.append(_mask_to_rle_counts(tight))
             new_crop_shapes_list.append((y_max - y_min + 1, x_max - x_min + 1))
             new_offsets_list.append((x1_off + x_min, y1_off + y_min))
 
@@ -901,14 +826,14 @@ class CompactMask:
             if ix1 > ix2 or iy1 > iy2:
                 anchor_x = min(max(x1, 0), new_w - 1)
                 anchor_y = min(max(y1, 0), new_h - 1)
-                out_rles.append(_rle_encode(np.zeros((1, 1), dtype=bool)))
+                out_rles.append(_mask_to_rle_counts(np.zeros((1, 1), dtype=bool)))
                 out_crop_shapes.append((1, 1))
                 out_offsets_list.append((anchor_x, anchor_y))
                 continue
 
             crop = self.crop(mask_idx)
             clipped = crop[iy1 - y1 : iy2 - y1 + 1, ix1 - x1 : ix2 - x1 + 1]
-            out_rles.append(_rle_encode(clipped))
+            out_rles.append(_mask_to_rle_counts(clipped))
             out_crop_shapes.append((iy2 - iy1 + 1, ix2 - ix1 + 1))
             out_offsets_list.append((ix1, iy1))
 
