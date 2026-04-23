@@ -1,6 +1,11 @@
 ---
 comments: true
 description: Benchmark object detection models with supervision — compute mAP, confusion matrix, and per-class metrics to compare model performance.
+authors:
+  - name: SkalskiP (Piotr Skalski)
+    role: Computer Vision Engineer, Roboflow
+    github: https://github.com/SkalskiP
+date_modified: 2026-04-22
 ---
 
 ![Corgi Example](https://media.roboflow.com/supervision/image-examples/how-to/benchmark-models/corgi-sorted-2.png)
@@ -445,3 +450,25 @@ A condensed version of this guide is also available as a [Colab Notebook](https:
 For more details, be sure to check out our [documentation](https://supervision.roboflow.com/latest/) and join our community discussions. If you find any issues, please let us know on [GitHub](https://github.com/roboflow/supervision/issues).
 
 Best of luck with your benchmarking!
+
+## Frequently Asked Questions
+
+### How do I benchmark a model with supervision?
+
+Use `supervision.metrics.mean_average_precision.MeanAveragePrecision` — accumulate prediction and ground-truth `Detections` with `update(...)` and then call `compute()`. For confusion matrices, use `sv.ConfusionMatrix.from_detections(predictions=predictions, targets=targets, classes=classes)`.
+
+### What IoU thresholds does MeanAveragePrecision use?
+
+It computes mAP over IoU thresholds from 0.50 to 0.95 in steps of 0.05 (mAP@50:95), plus mAP@50 and mAP@75 individually.
+
+### Can I benchmark segmentation models?
+
+Yes, if you want to evaluate their bounding boxes. Convert model outputs to `Detections` and pass them to `MeanAveragePrecision.update(...)`; the current mAP path prepares COCO-style bounding boxes from `detections.xyxy`.
+
+### What is a ConfusionMatrix and how do I use it?
+
+`sv.ConfusionMatrix` visualizes true positives, false positives, and false negatives per class. Create one with `sv.ConfusionMatrix.from_detections(predictions=predictions, targets=targets, classes=classes, conf_threshold=0.5, iou_threshold=0.5)`, then call `metric.plot()` to render a heatmap.
+
+## Author
+
+- [Piotr Skalski](https://github.com/SkalskiP) — Computer Vision Engineer, Roboflow

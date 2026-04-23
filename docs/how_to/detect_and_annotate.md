@@ -1,6 +1,14 @@
 ---
 comments: true
 description: Learn to load model predictions, create Detections objects, and annotate images with bounding boxes, labels, and masks using supervision.
+authors:
+  - name: SkalskiP (Piotr Skalski)
+    role: Computer Vision Engineer, Roboflow
+    github: https://github.com/SkalskiP
+  - name: Borda
+    role: Open Source Engineer, Roboflow
+    github: https://github.com/borda
+date_modified: 2026-04-22
 ---
 
 # Detect and Annotate
@@ -427,3 +435,26 @@ that will allow you to draw masks instead of boxes.
     ```
 
 ![segmentation-annotation](https://media.roboflow.com/supervision_detect_and_annotate_example_3.png)
+
+## Frequently Asked Questions
+
+### How do I detect and annotate objects with supervision?
+
+Pass any model's output to `sv.Detections.from_<model>()` to create a unified `Detections` object. Then pass it to `sv.BoxAnnotator` or `sv.MaskAnnotator` to draw predictions on an image.
+
+### Can I annotate both bounding boxes and masks at the same time?
+
+Yes. Chain annotators: first draw boxes with `BoxAnnotator`, then overlay masks with `MaskAnnotator` on the same scene.
+
+### How do I label detections with class names?
+
+Use `sv.LabelAnnotator` and pass custom text with the `labels` parameter. If a connector provides class names, they are stored in `detections["class_name"]` / `detections.data["class_name"]`; when `labels` is omitted, `LabelAnnotator` uses class names first, then class IDs, then detection indices.
+
+### Can I use supervision with Hugging Face models?
+
+Yes. `sv.Detections.from_transformers()` accepts supported Hugging Face object detection and segmentation outputs. Vision-language model outputs are handled through `sv.Detections.from_vlm(...)`, for example with `sv.VLM.FLORENCE_2` or `sv.VLM.PALIGEMMA`.
+
+## Authors
+
+- [Piotr Skalski](https://github.com/SkalskiP) — Computer Vision Engineer, Roboflow
+- [Borda](https://github.com/borda) — Open Source Engineer, Roboflow

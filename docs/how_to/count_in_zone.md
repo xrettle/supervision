@@ -1,6 +1,11 @@
 ---
 comments: true
 description: Count objects entering a polygon zone in images and video using supervision's PolygonZone — measure throughput and density in any region.
+authors:
+  - name: SkalskiP (Piotr Skalski)
+    role: Computer Vision Engineer, Roboflow
+    github: https://github.com/SkalskiP
+date_modified: 2026-04-22
 ---
 
 With supervision, you can count the number of objects in a zone in an image or video. In this guide, we will show how to count the number of cars in a traffic video.
@@ -132,3 +137,21 @@ Here is an example of inference run on the video:
 <video width="100%" loop muted autoplay>
   <source src="https://blog.roboflow.com/content/media/2023/03/trim-counting.mp4" type="video/mp4">
 </video>
+
+## Frequently Asked Questions
+
+### How do I count objects in a zone with supervision?
+
+Create `sv.PolygonZone` with a polygon defining your region. Call `zone.trigger(detections)` on each frame — it returns a mask of detections inside the zone.
+
+### Can I count objects crossing a line instead of entering a zone?
+
+Yes. Use `sv.LineZone` — define a start and end point. `zone.trigger(detections)` returns a tuple of two boolean arrays, `(crossed_in, crossed_out)`, indicating which detections crossed the line in each direction. `LineZone` requires `detections.tracker_id`; run a tracker first so the same object can be matched across frames.
+
+### Can I combine zone counting with tracking?
+
+Yes. You can pass tracker IDs from `sv.ByteTrack` alongside your detections, but `sv.PolygonZone` still evaluates the zone on each frame and reports which objects are currently inside it. If you want to count each object only once when it first enters the zone, maintain a set of seen `tracker_id` values after filtering detections with `zone.trigger(detections)`, or use a dedicated entry/crossing counting tool such as `sv.LineZone` when it better matches your use case.
+
+## Author
+
+- [Piotr Skalski](https://github.com/SkalskiP) — Computer Vision Engineer, Roboflow
