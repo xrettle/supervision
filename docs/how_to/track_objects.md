@@ -1,6 +1,14 @@
 ---
 comments: true
 description: Track objects across video frames with ByteTrack in supervision — assign persistent IDs and analyze motion from any object detection model.
+authors:
+  - name: SkalskiP (Piotr Skalski)
+    role: Computer Vision Engineer, Roboflow
+    github: https://github.com/SkalskiP
+  - name: soumik12345 (Soumik Mandal)
+    role: ML Engineer, Roboflow
+    github: https://github.com/soumik12345
+date_modified: 2026-04-22
 ---
 
 # Track Objects
@@ -656,3 +664,26 @@ We could stop here as we have successfully tracked the object detected by the ke
 </video>
 
 This structured walkthrough should give a detailed pathway to annotate videos effectively using Supervision’s various functionalities, including object tracking and trace annotations.
+
+## Frequently Asked Questions
+
+### How do I track objects across video frames with supervision?
+
+Pass `Detections` to `sv.ByteTrack.update_with_detections()` on each frame. The tracker assigns persistent IDs. Combine with `sv.TraceAnnotator` to visualize trajectories. `sv.ByteTrack` is deprecated in favor of `ByteTrackTracker` from the `trackers` package, where the update method is named `update()`.
+
+### What should I know about ByteTrack?
+
+ByteTrack uses low-confidence detections during association, which can improve continuity during missed or weak detections. Supervision's built-in `ByteTrack` wrapper is deprecated in favor of the external `trackers` package.
+
+### Can I track instances instead of bounding boxes?
+
+Yes. ByteTrack tracks bounding boxes. For instance masks, use `sv.MaskAnnotator` with the tracker IDs to color-code each tracked object consistently.
+
+### Does ByteTrack work with any detection model?
+
+Yes. ByteTrack is model-agnostic — it accepts any `Detections` object with bounding boxes, regardless of source (YOLO, SAM, Grounding DINO, Transformers, etc.).
+
+## Authors
+
+- [Piotr Skalski](https://github.com/SkalskiP) — Computer Vision Engineer, Roboflow
+- [Soumik Mandal](https://github.com/soumik12345) — ML Engineer, Roboflow
