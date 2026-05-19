@@ -202,7 +202,7 @@ def validate_vlm_parameters(vlm: VLM | str, result: Any, kwargs: dict[str, Any])
 
 def from_paligemma(
     result: str, resolution_wh: tuple[int, int], classes: list[str] | None = None
-) -> tuple[npt.NDArray[Any], npt.NDArray[Any] | None, npt.NDArray[Any]]:
+) -> tuple[npt.NDArray[Any], npt.NDArray[Any], npt.NDArray[Any]]:
     """
     Parse bounding boxes from paligemma-formatted text, scale them to the specified
     resolution, and optionally filter by classes.
@@ -229,7 +229,7 @@ def from_paligemma(
     matches = np.array(matches) if matches else np.empty((0, 5))
 
     if matches.shape[0] == 0:
-        return np.empty((0, 4)), None, np.empty(0, dtype=str)
+        return np.empty((0, 4)), np.empty((0,), dtype=int), np.empty(0, dtype=str)
 
     xyxy, class_name = matches[:, [1, 0, 3, 2]], matches[:, 4]
     xyxy = xyxy.astype(int) / 1024 * np.array([w, h, w, h])
@@ -626,7 +626,7 @@ def from_google_gemini_2_0(
     try:
         data = json.loads(result)
     except json.JSONDecodeError:
-        return np.empty((0, 4)), None, np.empty((0,), dtype=str)
+        return np.empty((0, 4)), np.empty((0,), dtype=int), np.empty((0,), dtype=str)
 
     labels = []
     xyxy = []
@@ -640,7 +640,7 @@ def from_google_gemini_2_0(
         xyxy.append([box[1], box[0], box[3], box[2]])
 
     if len(xyxy) == 0:
-        return np.empty((0, 4)), None, np.empty((0,), dtype=str)
+        return np.empty((0, 4)), np.empty((0,), dtype=int), np.empty((0,), dtype=str)
 
     xyxy = denormalize_boxes(
         np.array(xyxy, dtype=np.float64),
