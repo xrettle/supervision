@@ -369,8 +369,12 @@ def oriented_box_iou_batch(
     Args:
         boxes_true: A `np.ndarray` representing ground-truth boxes.
             `shape = (N, 4, 2)` where `N` is number of true objects.
+            Last axis convention: `[..., 0]` = x-coordinates,
+            `[..., 1]` = y-coordinates.
         boxes_detection: A `np.ndarray` representing detection boxes.
             `shape = (M, 4, 2)` where `M` is number of detected objects.
+            Last axis convention: `[..., 0]` = x-coordinates,
+            `[..., 1]` = y-coordinates.
 
     Returns:
         Pairwise IoU of boxes from `boxes_true` and `boxes_detection`.
@@ -381,9 +385,13 @@ def oriented_box_iou_batch(
     boxes_true = boxes_true.reshape(-1, 4, 2)
     boxes_detection = boxes_detection.reshape(-1, 4, 2)
 
-    max_height = int(max(boxes_true[:, :, 0].max(), boxes_detection[:, :, 0].max()) + 1)
+    if len(boxes_true) == 0 or len(boxes_detection) == 0:
+        return np.zeros((len(boxes_true), len(boxes_detection)), dtype=np.float64)
+
+    # Axis convention: [..., 0] = x-coordinates → canvas width, [..., 1] = y → height
     # adding 1 because we are 0-indexed
-    max_width = int(max(boxes_true[:, :, 1].max(), boxes_detection[:, :, 1].max()) + 1)
+    max_width = int(max(boxes_true[:, :, 0].max(), boxes_detection[:, :, 0].max()) + 1)
+    max_height = int(max(boxes_true[:, :, 1].max(), boxes_detection[:, :, 1].max()) + 1)
 
     mask_true = np.zeros((boxes_true.shape[0], max_height, max_width), dtype=np.uint8)
     for box_idx, box_true in enumerate(boxes_true):
