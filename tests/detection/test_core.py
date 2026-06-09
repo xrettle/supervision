@@ -6,6 +6,7 @@ from contextlib import ExitStack as DoesNotRaise
 import numpy as np
 import pytest
 
+from supervision.config import ORIENTED_BOX_COORDINATES
 from supervision.detection.core import Detections, merge_inner_detection_object_pair
 from supervision.geometry.core import Position
 from supervision.utils.internal import SupervisionWarnings
@@ -982,3 +983,101 @@ def test_from_inference_sdk_dict_path_empty_preserves_class_name_dtype() -> None
     detections = Detections.from_inference(_FakeSdkResult())
     assert detections["class_name"] is not None
     assert detections["class_name"].dtype.kind == "U"
+
+
+def _rotated_rect(
+    cx: float, cy: float, w: float, h: float, angle_deg: float
+) -> np.ndarray:
+    angle = np.deg2rad(angle_deg)
+    cos, sin = np.cos(angle), np.sin(angle)
+    rot = np.array([[cos, -sin], [sin, cos]])
+    corners = np.array(
+        [[-w / 2, -h / 2], [w / 2, -h / 2], [w / 2, h / 2], [-w / 2, h / 2]]
+    )
+    return (corners @ rot.T + [cx, cy]).astype(np.float32)
+
+
+def _make_obb_detections(
+    quads: list[np.ndarray], scores: list[float], class_ids: list[int]
+) -> Detections:
+    """Build OBB Detections from a list of (4, 2) corner arrays."""
+    oriented_boxes = np.stack(quads)
+    xyxy = np.array(
+        [[q[:, 0].min(), q[:, 1].min(), q[:, 0].max(), q[:, 1].max()] for q in quads],
+        dtype=np.float32,
+    )
+    return Detections(
+        xyxy=xyxy,
+        confidence=np.array(scores, dtype=np.float32),
+        class_id=np.array(class_ids, dtype=int),
+        data={ORIENTED_BOX_COORDINATES: oriented_boxes},
+    )
+
+
+class TestDetectionsObbDispatch:
+    """Shared OBB-aware dispatch behaviour for `with_nms` and `with_nmm`."""
+
+    @pytest.mark.parametrize(
+        "method",
+        [
+            pytest.param("with_nms", id="with_nms"),
+            pytest.param("with_nmm", id="with_nmm"),
+        ],
+    )
+    def test_uses_obb_iou_when_oriented_box_coordinates_present(
+        self, method: str
+    ) -> None:
+        """X-pattern OBBs: both survive under either method because OBB IoU < 0.5."""
+        quad_a = _rotated_rect(50, 50, 100, 10, +45)
+        quad_b = _rotated_rect(50, 50, 100, 10, -45)
+        detections = _make_obb_detections([quad_a, quad_b], [0.9, 0.85], [0, 0])
+
+        result = getattr(detections, method)(threshold=0.5)
+
+        assert len(result) == 2
+
+    @pytest.mark.parametrize(
+        "method",
+        [
+            pytest.param("with_nms", id="with_nms"),
+            pytest.param("with_nmm", id="with_nmm"),
+        ],
+    )
+    def test_falls_back_without_obb_data(self, method: str) -> None:
+        """Non-OBB heavily-overlapping AABBs collapse to one under either method."""
+        detections = Detections(
+            xyxy=np.array([[0, 0, 100, 100], [10, 10, 110, 110]], dtype=np.float32),
+            confidence=np.array([0.9, 0.85], dtype=np.float32),
+            class_id=np.array([0, 0], dtype=int),
+        )
+
+        result = getattr(detections, method)(threshold=0.5)
+
+        assert len(result) == 1
+
+
+class TestDetectionsWithNmm:
+    """NMM-specific behaviour tests for `Detections.with_nmm`."""
+
+    def test_obb_merged_xyxy_matches_winner_aabb(self) -> None:
+        """OBB merge group: merged xyxy must equal winner's AABB, not union AABB.
+
+        Two near-identical OBBs merge into one group. The winner (score 0.9) occupies
+        [10, 10, 50, 30]; the lower-score box [20, 20, 60, 40] is offset. Union AABB
+        would be [10, 10, 60, 40]; fix must produce winner's AABB [10, 10, 50, 30].
+        """
+        quad_winner = np.array(
+            [[10, 10], [50, 10], [50, 30], [10, 30]], dtype=np.float32
+        )
+        quad_other = np.array(
+            [[11, 11], [51, 11], [51, 31], [11, 31]], dtype=np.float32
+        )
+        detections = _make_obb_detections(
+            [quad_winner, quad_other], [0.9, 0.85], [0, 0]
+        )
+
+        result = detections.with_nmm(threshold=0.5)
+
+        assert len(result) == 1
+        expected_xyxy = np.array([[10.0, 10.0, 50.0, 30.0]], dtype=np.float32)
+        assert np.allclose(result.xyxy, expected_xyxy, atol=0.5)
