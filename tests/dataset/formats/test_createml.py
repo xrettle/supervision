@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from contextlib import ExitStack as DoesNotRaise
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -21,13 +21,12 @@ from supervision.detection.core import Detections
 
 class TestCreatemlAnnotationsToDetections:
     @pytest.mark.parametrize(
-        ("image_annotations", "class_to_index", "expected_result", "exception"),
+        ("image_annotations", "class_to_index", "expected_result"),
         [
             pytest.param(
                 [],
                 {},
                 Detections.empty(),
-                DoesNotRaise(),
                 id="empty-annotations",
             ),
             pytest.param(
@@ -42,7 +41,6 @@ class TestCreatemlAnnotationsToDetections:
                     xyxy=np.array([[40, 40, 60, 60]], dtype=np.float32),
                     class_id=np.array([0], dtype=int),
                 ),
-                DoesNotRaise(),
                 id="single-centre-box-to-xyxy",
             ),
             pytest.param(
@@ -61,7 +59,6 @@ class TestCreatemlAnnotationsToDetections:
                     xyxy=np.array([[8, 8, 12, 12], [25, 16, 35, 24]], dtype=np.float32),
                     class_id=np.array([0, 1], dtype=int),
                 ),
-                DoesNotRaise(),
                 id="multi-class-distinct-ids",
             ),
             pytest.param(
@@ -80,7 +77,6 @@ class TestCreatemlAnnotationsToDetections:
                     xyxy=np.array([[8, 8, 12, 12], [28, 28, 32, 32]], dtype=np.float32),
                     class_id=np.array([0, 0], dtype=int),
                 ),
-                DoesNotRaise(),
                 id="duplicate-labels-two-detections-same-id",
             ),
         ],
@@ -90,52 +86,51 @@ class TestCreatemlAnnotationsToDetections:
         image_annotations: list[dict],
         class_to_index: dict[str, int],
         expected_result: Detections,
-        exception: Exception,
     ) -> None:
         """Converts CreateML annotation list to Detections with correct xyxy and ids."""
-        with exception:
-            result = createml_annotations_to_detections(
-                image_annotations=image_annotations, class_to_index=class_to_index
-            )
-            np.testing.assert_array_almost_equal(result.xyxy, expected_result.xyxy)
-            assert (result.class_id is None) == (expected_result.class_id is None)
-            if expected_result.class_id is not None:
-                np.testing.assert_array_equal(result.class_id, expected_result.class_id)
+        result = createml_annotations_to_detections(
+            image_annotations=image_annotations, class_to_index=class_to_index
+        )
+        np.testing.assert_array_almost_equal(result.xyxy, expected_result.xyxy)
+        assert (result.class_id is None) == (expected_result.class_id is None)
+        if expected_result.class_id is not None:
+            np.testing.assert_array_equal(result.class_id, expected_result.class_id)
 
-    def test_raises_on_missing_coordinates_key(self) -> None:
-        """Raises ValueError when an annotation entry lacks the 'coordinates' key."""
+    @pytest.mark.parametrize(
+        ("image_annotations", "class_to_index"),
+        [
+            pytest.param(
+                [{"label": "dog"}],
+                {"dog": 0},
+                id="missing-coordinates-key",
+            ),
+            pytest.param(
+                [{"coordinates": {"x": 10, "y": 10, "width": 4, "height": 4}}],
+                {"dog": 0},
+                id="missing-label-key",
+            ),
+            pytest.param(
+                [{"label": "dog", "coordinates": {"x": 10, "y": 10, "width": 4}}],
+                {"dog": 0},
+                id="missing-coordinate-subkey",
+            ),
+            pytest.param(
+                [{"label": "dog", "coordinates": None}],
+                {"dog": 0},
+                id="coordinates-is-none",
+            ),
+        ],
+    )
+    def test_raises_on_malformed_annotation(
+        self,
+        image_annotations: list[dict],
+        class_to_index: dict[str, int],
+    ) -> None:
+        """Raises ValueError with 'Malformed' for any missing required field."""
         with pytest.raises(ValueError, match="Malformed"):
             createml_annotations_to_detections(
-                image_annotations=[{"label": "dog"}],
-                class_to_index={"dog": 0},
-            )
-
-    def test_raises_on_missing_label_key(self) -> None:
-        """Raises ValueError when an annotation entry lacks the 'label' key."""
-        with pytest.raises(ValueError, match="Malformed"):
-            createml_annotations_to_detections(
-                image_annotations=[
-                    {"coordinates": {"x": 10, "y": 10, "width": 4, "height": 4}}
-                ],
-                class_to_index={"dog": 0},
-            )
-
-    def test_raises_on_missing_coordinate_subkey(self) -> None:
-        """Raises ValueError when a coordinates dict is missing a required sub-key."""
-        with pytest.raises(ValueError, match="Malformed"):
-            createml_annotations_to_detections(
-                image_annotations=[
-                    {"label": "dog", "coordinates": {"x": 10, "y": 10, "width": 4}}
-                ],
-                class_to_index={"dog": 0},
-            )
-
-    def test_raises_when_coordinates_is_none(self) -> None:
-        """Raises ValueError when the coordinates value is None."""
-        with pytest.raises(ValueError, match="Malformed"):
-            createml_annotations_to_detections(
-                image_annotations=[{"label": "dog", "coordinates": None}],
-                class_to_index={"dog": 0},
+                image_annotations=image_annotations,
+                class_to_index=class_to_index,
             )
 
 
@@ -237,75 +232,77 @@ class TestLoadCreatemlAnnotations:
             annotations[str(tmp_path / "b.jpg")].class_id, np.array([0], dtype=int)
         )
 
-    def test_raises_on_path_traversal(self, tmp_path: Path) -> None:
-        """Raises ValueError when 'image' field attempts directory traversal."""
+    @pytest.mark.parametrize(
+        ("setup_fn", "match"),
+        [
+            pytest.param(
+                lambda p: ("../evil.jpg", str(p / "images")),
+                "outside",
+                id="path-traversal",
+            ),
+            pytest.param(
+                lambda p: (str(p.parent / "evil.jpg"), str(p)),
+                "outside",
+                id="absolute-outside",
+            ),
+            pytest.param(
+                lambda p: (".", str(p)),
+                "directory",
+                id="resolves-to-images-dir",
+            ),
+        ],
+    )
+    def test_raises_on_unsafe_image_path(
+        self,
+        tmp_path: Path,
+        setup_fn: Callable[[Path], tuple[str, str]],
+        match: str,
+    ) -> None:
+        """Raises ValueError for unsafe image path: traversal, absolute, directory."""
+        image, images_dir = setup_fn(tmp_path)
         annotations_path = tmp_path / "annotations.json"
-        payload = [{"image": "../evil.jpg", "annotations": []}]
+        annotations_path.write_text(json.dumps([{"image": image, "annotations": []}]))
+
+        with pytest.raises(ValueError, match=match):
+            load_createml_annotations(
+                images_directory_path=images_dir,
+                annotations_path=str(annotations_path),
+            )
+
+    @pytest.mark.parametrize(
+        ("payload", "match"),
+        [
+            pytest.param(
+                {"image": "a.jpg", "annotations": []},
+                "JSON list",
+                id="root-is-dict",
+            ),
+            pytest.param(
+                [{"annotations": []}],
+                "'image'",
+                id="missing-image-key",
+            ),
+            pytest.param(
+                [
+                    {"image": "a.jpg", "annotations": []},
+                    {"image": "a.jpg", "annotations": []},
+                ],
+                "duplicate",
+                id="duplicate-image-entry",
+            ),
+        ],
+    )
+    def test_raises_on_malformed_json(
+        self,
+        tmp_path: Path,
+        payload: dict | list,
+        match: str,
+    ) -> None:
+        """Raises ValueError for malformed JSON: bad root, missing key, duplicate."""
+        annotations_path = tmp_path / "annotations.json"
         annotations_path.write_text(json.dumps(payload))
 
-        with pytest.raises(ValueError, match="outside"):
-            load_createml_annotations(
-                images_directory_path=str(tmp_path / "images"),
-                annotations_path=str(annotations_path),
-            )
-
-    def test_raises_on_absolute_path(self, tmp_path: Path) -> None:
-        """Raises ValueError when 'image' is an absolute path outside images dir."""
-        annotations_path = tmp_path / "annotations.json"
-        outside = tmp_path.parent / "evil.jpg"
-        payload = [{"image": str(outside), "annotations": []}]
-        annotations_path.write_text(json.dumps(payload))
-
-        with pytest.raises(ValueError, match="outside"):
-            load_createml_annotations(
-                images_directory_path=str(tmp_path),
-                annotations_path=str(annotations_path),
-            )
-
-    def test_raises_when_image_is_the_directory_itself(self, tmp_path: Path) -> None:
-        """Raises ValueError when 'image' resolves to the images directory itself."""
-        annotations_path = tmp_path / "annotations.json"
-        payload = [{"image": ".", "annotations": []}]
-        annotations_path.write_text(json.dumps(payload))
-
-        with pytest.raises(ValueError, match="directory"):
-            load_createml_annotations(
-                images_directory_path=str(tmp_path),
-                annotations_path=str(annotations_path),
-            )
-
-    def test_raises_when_json_root_is_dict(self, tmp_path: Path) -> None:
-        """Raises ValueError when the JSON root is a dict instead of a list."""
-        annotations_path = tmp_path / "annotations.json"
-        annotations_path.write_text(json.dumps({"image": "a.jpg", "annotations": []}))
-
-        with pytest.raises(ValueError, match="JSON list"):
-            load_createml_annotations(
-                images_directory_path=str(tmp_path),
-                annotations_path=str(annotations_path),
-            )
-
-    def test_raises_on_missing_image_key(self, tmp_path: Path) -> None:
-        """Raises ValueError when an entry lacks the required 'image' key."""
-        annotations_path = tmp_path / "annotations.json"
-        annotations_path.write_text(json.dumps([{"annotations": []}]))
-
-        with pytest.raises(ValueError, match="'image'"):
-            load_createml_annotations(
-                images_directory_path=str(tmp_path),
-                annotations_path=str(annotations_path),
-            )
-
-    def test_raises_on_duplicate_image_entry(self, tmp_path: Path) -> None:
-        """Raises ValueError when the same image filename appears more than once."""
-        annotations_path = tmp_path / "annotations.json"
-        payload = [
-            {"image": "a.jpg", "annotations": []},
-            {"image": "a.jpg", "annotations": []},
-        ]
-        annotations_path.write_text(json.dumps(payload))
-
-        with pytest.raises(ValueError, match="duplicate"):
+        with pytest.raises(ValueError, match=match):
             load_createml_annotations(
                 images_directory_path=str(tmp_path),
                 annotations_path=str(annotations_path),
@@ -324,18 +321,38 @@ class TestSaveCreatemlAnnotations:
 
         assert json.loads(annotations_path.read_text()) == []
 
-    def test_save_load_round_trip(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize(
+        ("classes", "xyxy", "class_id", "decimal"),
+        [
+            pytest.param(
+                ["cat", "dog"],
+                np.array([[8, 8, 12, 12], [25, 16, 35, 24]], dtype=np.float32),
+                np.array([0, 1], dtype=int),
+                6,
+                id="integer-coords-multi-class",
+            ),
+            pytest.param(
+                ["dog"],
+                np.array([[10.3, 7.9, 44.1, 88.6]], dtype=np.float32),
+                np.array([0], dtype=int),
+                4,
+                id="float-coords",
+            ),
+        ],
+    )
+    def test_save_load_round_trip(
+        self,
+        tmp_path: Path,
+        classes: list[str],
+        xyxy: np.ndarray,
+        class_id: np.ndarray,
+        decimal: int,
+    ) -> None:
         """Save then load preserves class names, image paths, and bounding boxes."""
         images_directory_path = tmp_path / "images"
         annotations_path = tmp_path / "annotations.json"
-        classes = ["cat", "dog"]
         image_paths = [str(images_directory_path / "a.jpg")]
-        annotations = {
-            image_paths[0]: Detections(
-                xyxy=np.array([[8, 8, 12, 12], [25, 16, 35, 24]], dtype=np.float32),
-                class_id=np.array([0, 1], dtype=int),
-            )
-        }
+        annotations = {image_paths[0]: Detections(xyxy=xyxy, class_id=class_id)}
         dataset = DetectionDataset(
             classes=classes, images=image_paths, annotations=annotations
         )
@@ -349,34 +366,6 @@ class TestSaveCreatemlAnnotations:
         )
 
         assert loaded_classes == classes
-        loaded = loaded_annotations[str(images_directory_path / "a.jpg")]
-        np.testing.assert_array_almost_equal(
-            loaded.xyxy, annotations[image_paths[0]].xyxy
-        )
-        np.testing.assert_array_equal(
-            loaded.class_id, annotations[image_paths[0]].class_id
-        )
-
-    def test_save_load_round_trip_float_coordinates(self, tmp_path: Path) -> None:
-        """Float32 coordinates survive a save/load cycle within float32 precision."""
-        images_directory_path = tmp_path / "images"
-        annotations_path = tmp_path / "annotations.json"
-        xyxy = np.array([[10.3, 7.9, 44.1, 88.6]], dtype=np.float32)
-        image_paths = [str(images_directory_path / "a.jpg")]
-        annotations = {
-            image_paths[0]: Detections(xyxy=xyxy, class_id=np.array([0], dtype=int))
-        }
-        dataset = DetectionDataset(
-            classes=["dog"], images=image_paths, annotations=annotations
-        )
-
-        save_createml_annotations(
-            dataset=dataset, annotations_path=str(annotations_path)
-        )
-        _, _, loaded_annotations = load_createml_annotations(
-            images_directory_path=str(images_directory_path),
-            annotations_path=str(annotations_path),
-        )
-
-        loaded = loaded_annotations[str(images_directory_path / "a.jpg")]
-        np.testing.assert_array_almost_equal(loaded.xyxy, xyxy, decimal=4)
+        loaded = loaded_annotations[image_paths[0]]
+        np.testing.assert_array_almost_equal(loaded.xyxy, xyxy, decimal=decimal)
+        np.testing.assert_array_equal(loaded.class_id, class_id)
