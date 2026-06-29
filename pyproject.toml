@@ -88,7 +88,7 @@ docs = [
   "mkdocs-jupyter>=0.24.3",
   "mkdocs-material[imaging]>=9.7",
   "mkdocstrings>=1,<1.1",
-  "mkdocstrings-python>=1.10.9,<2",                                                      # todo: breaking changes in 2.x
+  "mkdocstrings-python>=2,<3",
 ]
 build = [
   "build>=1,<1.6",
@@ -101,6 +101,9 @@ include-package-data = false
 package-data.supervision = [ "py.typed" ]
 packages.find.where = [ "src" ]
 packages.find.include = [ "supervision*" ]
+
+[tool.uv]
+dependency-groups.docs = { requires-python = ">=3.10" }
 
 # exclude = [ "docs*", "tests*", "examples*" ]
 [tool.ruff]
