@@ -50,6 +50,23 @@ def extract_ultralytics_masks(yolov8_results: Any) -> npt.NDArray[np.bool_] | No
     return cast(npt.NDArray[np.bool_], np.asarray(mask_maps, dtype=bool))
 
 
+def _all_present_or_none(
+    values: list[Any],
+    label: str,
+    dtype: npt.DTypeLike,
+) -> npt.NDArray[Any] | None:
+    # Identity check (`v is None`) is required when values may contain numpy arrays:
+    # `None in values` triggers element-wise comparison and raises ValueError.
+    missing = sum(v is None for v in values)
+    if 0 < missing < len(values):
+        logger.warning(
+            "Partial %s in batch; dropping all to preserve alignment with xyxy.", label
+        )
+    if not values or missing > 0:
+        return None
+    return np.array(values, dtype=dtype)
+
+
 def process_roboflow_result(
     roboflow_result: dict[str, Any],
 ) -> tuple[
@@ -74,10 +91,14 @@ def process_roboflow_result(
     Returns:
         A 6-tuple of ``(xyxy, confidence, class_id, masks, tracker_ids, data)``
         where each array is aligned with the others. ``masks`` is ``None``
-        when no predictions include mask data. ``tracker_ids`` is ``None``
-        when no predictions carry a tracker ID, or when only a subset do
-        (mixed batch) — in that case all tracker IDs are dropped to preserve
-        alignment with ``xyxy``.
+        when no predictions include mask data, or when only a subset do
+        (mixed batch) — in that case all masks are dropped to preserve
+        alignment with ``xyxy``. A failed RLE decode is treated identically
+        to a box-only prediction, so one corrupt RLE payload in an otherwise
+        fully-masked batch also causes all masks to be dropped.
+        ``tracker_ids`` is ``None`` when no predictions carry a tracker ID,
+        or when only a subset do (mixed batch) — in that case all tracker
+        IDs are dropped to preserve alignment with ``xyxy``.
 
     Examples:
         >>> from supervision.detection.utils.internal import process_roboflow_result
@@ -100,7 +121,7 @@ def process_roboflow_result(
     confidence: list[float] = []
     class_id: list[int] = []
     class_name: list[str] = []
-    masks: list[npt.NDArray[np.bool_]] = []
+    masks: list[npt.NDArray[np.bool_] | None] = []
     tracker_ids: list[int | None] = []
 
     image_width = int(roboflow_result["image"]["width"])
@@ -151,6 +172,7 @@ def process_roboflow_result(
             class_id.append(prediction["class_id"])
             class_name.append(prediction["class"])
             confidence.append(prediction["confidence"])
+            masks.append(None)
             tracker_ids.append(prediction.get("tracker_id"))
         elif len(prediction["points"]) >= 3:
             polygon = np.array(
@@ -180,18 +202,11 @@ def process_roboflow_result(
     class_name_arr: npt.NDArray[np.str_] = (
         np.array(class_name) if len(class_name) > 0 else np.empty(0, dtype=str)
     )
-    masks_arr: npt.NDArray[np.bool_] | None = (
-        np.array(masks, dtype=bool) if len(masks) > 0 else None
+    masks_arr: npt.NDArray[np.bool_] | None = _all_present_or_none(
+        masks, "mask", dtype=bool
     )
-    if tracker_ids and 0 < tracker_ids.count(None) < len(tracker_ids):
-        logger.warning(
-            "Partial tracker_id in batch; dropping all tracker_ids to preserve "
-            "alignment with xyxy."
-        )
-    tracker_id_arr: npt.NDArray[np.integer] | None = (
-        np.array(tracker_ids, dtype=np.int64)
-        if tracker_ids and None not in tracker_ids
-        else None
+    tracker_id_arr: npt.NDArray[np.integer] | None = _all_present_or_none(
+        tracker_ids, "tracker_id", dtype=np.int64
     )
     data: _DetectionDataType = {CLASS_NAME_DATA_FIELD: class_name_arr}
 
