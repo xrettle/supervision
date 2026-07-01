@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 
+from supervision.detection.compact_mask import CompactMask
 from supervision.detection.core import Detections
 from supervision.metrics import MeanAverageRecall, MetricTarget
 
@@ -397,6 +398,43 @@ def test_compute_value_error_for_missing_required_fields_after_update(
 
     with pytest.raises(ValueError, match="MeanAverageRecall metric requires"):
         metric.update(predictions, targets).compute()
+
+
+def test_mask_content_preserves_compact_mask() -> None:
+    """CompactMask inputs stay compact for mask IoU."""
+    dense_mask = np.zeros((1, 4, 5), dtype=bool)
+    dense_mask[0, 1:3, 1:4] = True
+    xyxy = np.array([[1, 1, 4, 3]], dtype=np.float64)
+    compact_mask = CompactMask.from_dense(
+        dense_mask, xyxy=xyxy, image_shape=dense_mask.shape[1:]
+    )
+    detections = Detections(xyxy=xyxy, mask=compact_mask)
+    metric = MeanAverageRecall(metric_target=MetricTarget.MASKS)
+
+    content = metric._detections_content(detections)
+
+    assert content is compact_mask
+
+
+def test_compute_with_compact_mask_matches_dense() -> None:
+    """MeanAverageRecall.compute() yields same recall_scores for CompactMask."""
+    masks = np.zeros((1, 50, 50), dtype=bool)
+    masks[0, 10:20, 10:20] = True
+    xyxy = np.array([[10, 10, 19, 19]], dtype=np.float64)
+    cm = CompactMask.from_dense(masks, xyxy, image_shape=(50, 50))
+    det_dense = Detections(
+        xyxy=xyxy, mask=masks, confidence=np.array([0.9]), class_id=np.array([0])
+    )
+    det_compact = Detections(
+        xyxy=xyxy, mask=cm, confidence=np.array([0.9]), class_id=np.array([0])
+    )
+    metric = MeanAverageRecall(metric_target=MetricTarget.MASKS)
+
+    r_dense = metric.update(det_dense, det_dense).compute()
+    metric.reset()
+    r_compact = metric.update(det_compact, det_compact).compute()
+
+    np.testing.assert_allclose(r_dense.recall_scores, r_compact.recall_scores)
 
 
 def test_single_perfect_detection() -> None:
